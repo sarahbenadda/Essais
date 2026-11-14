@@ -1,0 +1,88 @@
+import pygame
+import os
+from constants import (
+    WINDOW_WIDTH, WINDOW_HEIGHT, TILE_SIZE,
+    COLOR_BG, COLOR_TEXT, COLOR_ACCENT, COLOR_PANEL, COLOR_PANEL_BORDER,
+    GameState
+)
+from model.game_model import GameModel
+
+
+class GameView:
+    """gère l'affichage du jeu, du menu, du circuit et de la voiture"""
+
+    def __init__(self, screen: pygame.Surface):
+        """initialise la surface d'affichage et de la police """
+        self.screen = screen
+        self.font = pygame.font.SysFont("Arial", 24)
+        self.jussieu_image = pygame.image.load(os.path.join(os.path.dirname(__file__), "..", "assets", "jussieu.png")).convert()
+        self.orly_image = pygame.image.load(os.path.join(os.path.dirname(__file__), "..", "assets", "orly.png")).convert()
+        self.tokyo_image = pygame.image.load(os.path.join(os.path.dirname(__file__), "..", "assets", "tokyo.png")).convert()
+
+    def draw(self, model: GameModel) -> None:
+        """affiche le menu"""
+        self.screen.fill(COLOR_BG)
+        if model.state == GameState.MENU:
+            self._draw_menu(model)
+        elif model.state == GameState.CIRCUIT_SELECTION:
+            self._draw_selection(model)
+        elif model.state == GameState.RACING:
+            self._draw_racing(model)
+        pygame.display.flip()
+
+    def _draw_menu(self, model: GameModel) -> None:
+        """dessine le menu principal avec les options Jouer et Quitter"""
+        cx = WINDOW_WIDTH // 2
+
+        title_surf = self.font.render(
+            "Jeu de course 2D", True, COLOR_ACCENT)
+        self.screen.blit(title_surf, title_surf.get_rect(center=(cx, 160)))
+
+        options = [("JOUER (Enter)", GameState.RACING),
+                   ("QUITTER (Escape)", None)]
+        for i, (label, _) in enumerate(options):
+            y = 320 + i * 80
+            rect = pygame.Rect(cx - 140, y - 25, 280, 50)
+            pygame.draw.rect(self.screen, COLOR_PANEL, rect, border_radius=8)
+            pygame.draw.rect(self.screen, COLOR_PANEL_BORDER,
+                             rect, 2, border_radius=8)
+            text_surf = self.font.render(
+                label, True, COLOR_ACCENT if i == 0 else COLOR_TEXT)
+            self.screen.blit(text_surf, text_surf.get_rect(center=rect.center))
+
+    def _draw_selection(self, model: GameModel) -> None:
+        """affiche les circuits et met en évidence celui qui est sélectionné"""
+        cx = WINDOW_WIDTH // 2
+        title = self.font.render("Choisir un circuit", True, COLOR_ACCENT)
+        self.screen.blit(title, title.get_rect(center=(cx, 160)))
+        for i, nom in enumerate(model.circuit_names):
+            y = 320 + i * 80
+            rect = pygame.Rect(cx - 180, y - 25, 360, 50)
+            pygame.draw.rect(self.screen, COLOR_PANEL, rect, border_radius=8)
+            if i == model.selected_circuit:
+                color = COLOR_ACCENT
+            else:
+                color = COLOR_TEXT
+            pygame.draw.rect(self.screen, color, rect, 2, border_radius=8)
+            text = self.font.render(nom, True, color)
+            self.screen.blit(text, text.get_rect(center=rect.center))
+        info = self.font.render("Haut/Bas : choisir | Entree : jouer | Echap : retour",True, COLOR_TEXT)
+        self.screen.blit(info, info.get_rect(center=(cx, 570)))
+        
+    def _draw_racing(self, model: GameModel) -> None:
+        """dessine les cases du circuit puis la voiture à sa position actuelle"""
+        if model.circuit is None:
+            return
+    
+        if model.selected_circuit == 0:
+            self.screen.blit(self.jussieu_image, (0, 0))
+        elif model.selected_circuit == 1:
+            self.screen.blit(self.orly_image, (0, 0))
+        else:
+            self.screen.blit(self.tokyo_image, (0, 0))
+
+        if model.car is None:
+            return
+    
+        surf, rect = model.car.get_rotated_sprite()
+        self.screen.blit(surf, rect)
