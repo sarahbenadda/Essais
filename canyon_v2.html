@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mini Kart — Canyon V2</title>
+<style>
+  html,body{margin:0;background:#31272a;color:#ffe9cc;font-family:monospace}
+  main{max-width:1024px;margin:8px auto;text-align:center;padding:0 8px}
+  canvas{display:block;width:100%;height:auto;image-rendering:pixelated;background:#f1b06f;
+    border:3px solid #a96b47;box-sizing:border-box;touch-action:manipulation}
+  p{font-size:14px;line-height:1.5;margin:8px 0 4px}
+  button{border:1px solid #e3cb93;background:#345a55;color:#fff0d7;
+    padding:9px 17px;font:700 14px monospace;border-radius:4px;cursor:pointer}
+</style>
+</head>
+<body>
+<main><canvas id="game" width="1024" height="768" tabindex="0" aria-label="Mini Kart Canyon V2, jeu pour deux joueurs"></canvas>
+<p>J1 : ZQSD (ou WASD) • J2 : flèches • Entrée : jouer • R : recommencer • Échap : menu</p>
+<button id="play">JOUER / REJOUER</button> <button id="focus">ACTIVER LE CLAVIER</button>
+</main>
+<script>
+'use strict';
+const cv=document.getElementById('game'), g=cv.getContext('2d');
+const W=1024,H=768,S=64,ROAD='#313741',GRASS='#f1b06f';
+const map=Array.from({length:12},()=>Array(16).fill('grass'));
+// Les routes forment une seule boucle fermee avec une chicane en haut.
+for(const r of [9,10])for(let c=1;c<15;c++)map[r][c]='road';
+for(let r=1;r<11;r++)for(const c of [1,2,13,14])map[r][c]='road';
+for(const r of [1,2])for(const c of [1,2,3,4,5,6,11,12,13,14])map[r][c]='road';
+for(let r=1;r<5;r++)for(const c of [5,6,10,11])map[r][c]='road';
+for(const r of [3,4])for(let c=5;c<12;c++)map[r][c]='road';
+// Chicane de terre : physique differente de l'asphalte.
+for(const r of [3,4])for(const c of [8,9])map[r][c]='dirt';
+const cps=[[640,576,14,128],[832,384,128,14],[192,64,14,128],[64,384,128,14]];
+const boosts=[[12,9],[7,4]], finish=512, cols=['#e85b55','#60b1ee'];
+const starts=[[5.7*64,9.45*64],[5.7*64,10.45*64]];
+const keys=new Set();let state='menu',winner=0,cars=[];
+const fill=(color,x,y,w,h)=>{g.fillStyle=color;g.fillRect(x,y,w,h)};
+// Tous les motifs ci-dessous sont dessines en pixels sur le canvas.
+// Aucun fichier image externe ni illustration generative dans le jeu.
+function polygon(color,points){g.fillStyle=color;g.beginPath();g.moveTo(...points[0]);
+  for(const point of points.slice(1))g.lineTo(...point);g.closePath();g.fill()}
+function mesa(x,y){
+  fill('#cd8553',x-105,y+44,210,12);
+  polygon('#8c4834',[[x-108,y+44],[x-73,y-12],[x-54,y-24],[x+54,y-24],[x+79,y+9],[x+106,y+44]]);
+  polygon('#ba5e3b',[[x-91,y+39],[x-63,y-9],[x-41,y-24],[x+53,y-24],[x+73,y+10],[x+96,y+39]]);
+  polygon('#dc8047',[[x-64,y-24],[x-48,y-43],[x+45,y-43],[x+58,y-23],[x+49,y-14],[x-56,y-14]]);
+  fill('#f8a65f',x-45,y-45,86,10);fill('#a04730',x-76,y+27,22,12);
+  fill('#eb9052',x-25,y-10,14,39);fill('#a44a33',x+23,y-10,19,28);
+}
+function cactus(x,y){
+  fill('#d58a54',x-27,y+30,55,7);fill('#215e3c',x-9,y-41,19,73);
+  fill('#4d9756',x-3,y-38,6,64);fill('#215e3c',x-28,y-8,21,13);
+  fill('#215e3c',x-28,y-29,11,24);fill('#215e3c',x+9,y+3,22,11);
+  fill('#215e3c',x+21,y-20,10,28);fill('#ffa2b1',x-9,y-45,14,7);
+}
+function rock(x,y){
+  polygon('#7e5e50',[[x-23,y+12],[x-13,y-9],[x+13,y-14],[x+27,y+10]]);
+  polygon('#bb8e6f',[[x-21,y+6],[x-11,y-11],[x+5,y-13],[x+10,y+5]]);
+  fill('#644e48',x-25,y+12,52,5);
+}
+function cliff(x,y){
+  polygon('#a64b33',[[x-28,y+21],[x-15,y-16],[x+18,y-16],[x+31,y+21]]);
+  fill('#f28f4e',x-15,y-19,33,8);fill('#c25d39',x-22,y+5,20,14);
+}
+function tuft(x,y){
+  fill('#858b45',x-14,y+3,29,5);fill('#698745',x-6,y-10,7,15);
+  fill('#698745',x+4,y-6,6,11);fill('#8f9d4e',x-11,y-2,5,10);
+}
+function fence(x,y,len){
+  fill('#683b2c',x,y+4,len,6);fill('#ad623d',x,y,len,5);
+  fill('#683b2c',x,y+24,len,6);fill('#ad623d',x,y+19,len,5);
+  for(let p=x+2;p<x+len;p+=48){fill('#5a3027',p,y-9,10,42);fill('#d7824d',p+2,y-10,6,35)}
+}
+function warning(x,y){
+  polygon('#3b2a27',[[x,y-25],[x+25,y],[x,y+25],[x-25,y]]);
+  polygon('#ffc241',[[x,y-20],[x+20,y],[x,y+20],[x-20,y]]);
+  fill('#362c24',x-2,y-10,5,15);fill('#362c24',x-2,y+9,5,5);
+  fill('#603b2c',x-4,y+25,8,23);
+}
+function watchtower(x,y){
+  fill('#693b2b',x-26,y-3,9,63);fill('#693b2b',x+17,y-3,9,63);
+  fill('#bf6f42',x-24,y-2,5,56);fill('#bf6f42',x+19,y-2,5,56);
+  fill('#6b412f',x-26,y+35,51,5);fill('#714632',x-18,y+2,36,30);
+  fill('#f2c473',x-15,y+5,30,21);fill('#6e432e',x-12,y+7,24,15);
+  polygon('#6c3a2b',[[x-38,y-4],[x-18,y-32],[x+23,y-32],[x+39,y-4]]);
+  fill('#cd7444',x-36,y-10,73,12);fill('#ef9351',x-18,y-33,42,8);
+}
+function tileType(x,y){let c=Math.floor(x/64),r=Math.floor(y/64);
+  return r>=0&&r<12&&c>=0&&c<16?map[r][c]:'void'}
+const bg=document.createElement('canvas');bg.width=W;bg.height=H;const mainG=g;
+function paintBackground(){
+  g.clearRect(0,0,W,H);
+  for(let r=0;r<12;r++)for(let c=0;c<16;c++){
+    const t=map[r][c],x=c*64,y=r*64;
+    let col=t==='road'?ROAD:t==='dirt'?'#ac653f':(r+c)%3===0?'#f6b878':GRASS;
+    fill(col,x,y,64,64);
+    if(t==='grass'){fill('#e69c61',x+12,y+16,22,4);fill('#f9c185',x+37,y+45,18,5)}
+    else if(t==='road'){fill('#363c46',x+19,y+23,12,3)}
+    else if(t==='dirt'){fill('#c47a48',x+7,y+14,25,5);fill('#924e36',x+34,y+46,20,6)}
+  }
+  // Bordures identiques a la version Pygame, sans changer la physique.
+  for(let r=0;r<12;r++)for(let c=0;c<16;c++){
+    if(!['road','dirt'].includes(map[r][c]))continue;
+    const x=c*64,y=r*64;
+    for(const [dc,dr,side]of [[-1,0,'left'],[1,0,'right'],[0,-1,'top'],[0,1,'bottom']]){
+      if(['road','dirt'].includes(map[r+dr]?.[c+dc]))continue;
+      for(let part=0;part<4;part++){
+        const col=(part+c+r)%2?'#f6ead6':'#c74039';
+        if(side==='left'){fill(col,x,y+part*16,9,16);fill('#853331',x+9,y+part*16,3,16)}
+        else if(side==='right'){fill(col,x+55,y+part*16,9,16);fill('#853331',x+52,y+part*16,3,16)}
+        else if(side==='top'){fill(col,x+part*16,y,16,9);fill('#853331',x+part*16,y+9,16,3)}
+        else{fill(col,x+part*16,y+55,16,9);fill('#853331',x+part*16,y+52,16,3)}
+      }
+    }
+  }
+  // Lignes discontinues : pas de fleches de direction.
+  for(let x=180;x<856;x+=56)fill('#878b8e',x,638,27,4);
+  for(const x of [195,752,800,855])fill('#878b8e',x,128,24,4);
+  for(let x=416;x<625;x+=50)fill('#878b8e',x,252,24,4);
+  for(let y=295;y<535;y+=48){fill('#878b8e',126,y,4,24);fill('#878b8e',894,y,4,24)}
+  for(const p of [[22,130],[981,145],[23,745],[1003,739]])cliff(...p);
+  mesa(506,490);cactus(320,473);cactus(665,508);watchtower(736,463);
+  fence(425,535,205);fence(476,156,92);warning(576,128);
+  for(const p of [[274,548],[778,549],[278,378],[719,368],[986,489]])rock(...p);
+  for(const p of [[34,348],[987,324],[241,346],[635,359],[362,541],[792,515],[26,609],[976,611]])tuft(...p);
+  for(let y=576;y<704;y+=12)for(let x=504;x<520;x+=8)
+    fill(((y-576)/12+(x-504)/8)%2?'#fbeed6':'#222731',x,y,8,Math.min(12,704-y));
+}
+paintBackground();const bkgImage=new Image();bkgImage.src=cv.toDataURL('image/png');
+function makeCar(x,y,color){return {x,y,angle:0,vx:0,vy:0,color,laps:0,cp:0,last:[x,y],boost:0,cd:0,cpFlash:0}}
+function restart(){cars=starts.map(([x,y],i)=>makeCar(x,y,cols[i]));winner=0;state='racing';cv.focus()}
+const inside=(c,rect)=>c.x>=rect[0]&&c.x<rect[0]+rect[2]&&c.y>=rect[1]&&c.y<rect[1]+rect[3];
+function physics(car,dt,p){let t=tileType(car.x,car.y),props={road:[310,270,5.5,.9],grass:[150,120,1.8,2.4],dirt:[155,145,1.2,1.6],ice:[100,245,.3,.35]};
+  let [acc,max,grip,drag]=props[t]||props.grass;
+  let fx=Math.cos(car.angle),fy=Math.sin(car.angle),along=car.vx*fx+car.vy*fy;
+  let steer=(p.right?1:0)-(p.left?1:0);
+  if(Math.abs(along)>5)car.angle+=steer*Math.sign(along)*(1+Math.min(Math.abs(along)/150,1))*1.35*dt;
+  fx=Math.cos(car.angle);fy=Math.sin(car.angle);
+  if(car.boost>0){acc*=1.55;max*=1.25}
+  let gas=(p.up?1:0)-(p.down?1:0);
+  car.vx+=fx*gas*acc*dt;car.vy+=fy*gas*acc*dt;
+  along=car.vx*fx+car.vy*fy;
+  let k=Math.exp(-grip*dt),f=Math.exp(-drag*dt);
+  car.vx=(along*fx+(car.vx-along*fx)*k)*f;
+  car.vy=(along*fy+(car.vy-along*fy)*k)*f;
+  let v=Math.hypot(car.vx,car.vy);
+  if(v>max){car.vx*=max/v;car.vy*=max/v}
+  let old=car.x;car.x+=car.vx*dt;car.y+=car.vy*dt;
+  car.boost=Math.max(0,car.boost-dt);car.cd=Math.max(0,car.cd-dt);car.cpFlash=Math.max(0,car.cpFlash-dt);
+  if(tileType(car.x,car.y)==='void'){[car.x,car.y]=car.last;car.vx=car.vy=0;return}
+  if(car.cp<4&&inside(car,cps[car.cp])){car.cp++;car.last=[car.x,car.y];car.cpFlash=1.2}
+  if(old<finish&&car.x>=finish&&car.y>576&&car.y<704&&car.cp===4){
+    car.laps++;car.cp=0;
+    if(car.laps>=3){winner=cars.indexOf(car)+1;state='finished'}
+  }
+  for(const [bc,br]of boosts)if(Math.floor(car.x/S)===bc&&Math.floor(car.y/S)===br&&car.cd<=0){
+    car.boost=.9;car.cd=3;
+    // Acceleration immediate pour que le joueur sente le boost.
+    car.vx+=Math.cos(car.angle)*110;
+    car.vy+=Math.sin(car.angle)*110;
+    let speed=Math.hypot(car.vx,car.vy);
+    if(speed>330){car.vx*=330/speed;car.vy*=330/speed}
+  }
+}
+function drawBlocks(){g.textAlign='center';g.textBaseline='middle';g.font='bold 14px monospace';
+  cps.forEach(([x,y,w,h],i)=>{fill('rgba(113,228,221,.18)',x,y,w,h);
+    g.strokeStyle='#80dedc';g.lineWidth=3;g.strokeRect(x,y,w,h);
+    g.fillStyle='#e3ffff';g.fillText('C'+(i+1),x+w/2,y+h/2)});
+  // Bloc jaune B : boost, pas une fleche de direction.
+  for(const [col,row]of boosts){let x=col*S+32,y=row*S+32;
+    fill('#452d26',x-22,y-22,44,44);fill('#ffc23c',x-18,y-18,36,36);fill('#ffe369',x-15,y-15,30,7);
+    g.fillStyle='#303433';g.fillText('B',x,y+1)}
+}
+function drawCar(c){g.save();g.translate(c.x,c.y);g.rotate(c.angle);
+  fill('#223038',-20,-15,39,30);fill(c.color,-20,-11,39,22);
+  fill('#f6edcf',-9,-8,13,16);fill('#385e6d',-1,-8,7,16);fill('#f5d981',16,-8,5,16);
+  fill('#223038',-13,-17,13,6);fill('#223038',-13,11,13,6);
+  g.restore()}
+function label(text,x,y,color='#f8f3dc',font='bold 18px monospace'){
+  g.font=font;g.textAlign='left';g.textBaseline='alphabetic';
+  g.fillStyle='#1a282f';g.fillText(text,x+2,y+2);g.fillStyle=color;g.fillText(text,x,y)}
+function overlay(title,subtitle,instructions){fill('rgba(18,35,38,.60)',0,0,W,H);
+  fill('#402925',216,248,592,260);g.strokeStyle='#ed9b5b';g.lineWidth=4;g.strokeRect(216,248,592,260);
+  g.textAlign='center';g.textBaseline='middle';g.fillStyle='#f8f3dc';g.font='bold 42px monospace';g.fillText(title,512,320);
+  g.font='bold 18px monospace';g.fillStyle='#d6ebdc';g.fillText(subtitle,512,388);
+  g.font='bold 14px monospace';g.fillText(instructions,512,458)}
+function draw(){g.drawImage(bkgImage,0,0);drawBlocks();cars.forEach(drawCar);
+  fill('#382322',13,7,998,60);g.strokeStyle='#cc7f4a';g.lineWidth=3;g.strokeRect(13,7,998,60);
+  label('CANYON RUN V2',28,38,'#fce6b8');
+  cars.forEach((c,i)=>{
+    const x=i?712:415;
+    label('J'+(i+1)+': '+Math.min(c.laps+1,3)+'/3 tours',x,29,c.color,'bold 17px monospace');
+    label('C: '+c.cp+'/4',x,52,c.color,'bold 14px monospace');
+    if(c.boost>0) label('BOOST !',x+80,52,'#f7cd5b','bold 14px monospace');
+    else if(c.cpFlash>0)label('C'+c.cp+' OK !',x+80,52,'#a4e9e0','bold 14px monospace');
+  });
+  if(state==='menu')overlay('MINI KART','CANYON V2','ENTREE : JOUER  |  ZQSD + FLECHES');
+  if(state==='finished')overlay('JOUEUR '+winner+' GAGNE !','COURSE TERMINEE','ENTREE : REJOUER')}
+function controls(i){return i===0?{up:keys.has('z')||keys.has('w'),down:keys.has('s'),left:keys.has('q')||keys.has('a'),right:keys.has('d')}:
+  {up:keys.has('ArrowUp'),down:keys.has('ArrowDown'),left:keys.has('ArrowLeft'),right:keys.has('ArrowRight')}}
+function frame(ts){if(!frame.prev)frame.prev=ts;let dt=Math.min((ts-frame.prev)/1000,.05);frame.prev=ts;
+  if(state==='racing')cars.forEach((car,i)=>physics(car,dt,controls(i)));
+  draw();requestAnimationFrame(frame)}
+window.addEventListener('keydown',e=>{const k=e.key.length===1?e.key.toLowerCase():e.key;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(k))e.preventDefault();
+  if(k==='Enter'&&state!=='racing'){restart();e.preventDefault()}
+  else if(k==='r')restart();else if(k==='Escape'){state='menu'}
+  keys.add(k)});
+window.addEventListener('keyup',e=>keys.delete(e.key.length===1?e.key.toLowerCase():e.key));
+window.addEventListener('blur',()=>keys.clear());
+document.getElementById('play').addEventListener('click',restart);
+document.getElementById('focus').addEventListener('click',()=>cv.focus());
+cars=starts.map(([x,y],i)=>makeCar(x,y,cols[i]));
+if(new URLSearchParams(location.search).has('preview'))state='racing';
+cv.focus();requestAnimationFrame(frame);
+</script>
+</body>
+</html>
